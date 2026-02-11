@@ -11,9 +11,9 @@ import asyncio
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
-# 管理者・ログ用ID（環境に合わせて修正してください）
-LOG_CHANNEL_ID   = 1469273435203964949
-OWNER_ID         = 455348169191194626
+# --- 修正後（環境変数から読み込む） ---
+LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', '0'))
+OWNER_ID       = int(os.getenv('OWNER_ID', '0'))
 
 # 2. データベース準備
 db = sqlite3.connect('serina_beta.db') 
@@ -299,5 +299,6 @@ async def broadcast(ctx, *, message: str):
                 pass 
                 
     await status_msg.edit(content=f"✅ **送信完了！**\n{sent_count}箇所のチャンネルへ届けました。")
+
 
 bot.run(TOKEN)
