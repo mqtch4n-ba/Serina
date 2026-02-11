@@ -4,25 +4,24 @@ from discord import app_commands
 import datetime
 import os
 import sqlite3
-from dotenv import load_dotenv
 import asyncio
-
-# タイムゾーンの定義（UTC+9）
-JST = datetime.timezone(datetime.timedelta(hours=9))
+from dotenv import load_dotenv
 
 # 1. 環境設定
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
-# --- 修正後（環境変数から読み込む） ---
-LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', '0'))
-OWNER_ID       = int(os.getenv('OWNER_ID', '0'))
+# 日本時間(JST)の定義
+JST = datetime.timezone(datetime.timedelta(hours=9))
+
+# 管理者・ログ用ID（環境変数から読み込む設定）
+LOG_CHANNEL_ID = int(os.getenv('LOG_CHANNEL_ID', '1469273435203964949'))
+OWNER_ID       = int(os.getenv('OWNER_ID', '455348169191194626'))
 
 # 2. データベース準備
 db = sqlite3.connect('serina_beta.db') 
 cursor = db.cursor()
 
-# テーブル作成
 cursor.execute('''CREATE TABLE IF NOT EXISTS reminders 
                   (user_id INTEGER PRIMARY KEY, 
                    next_time TEXT, 
@@ -30,7 +29,6 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS reminders
                    mention_enabled INTEGER DEFAULT 1,
                    reset_mention_enabled INTEGER DEFAULT 1)''')
 
-# 既存DBへのカラム追加救護策
 try:
     cursor.execute("ALTER TABLE reminders ADD COLUMN reset_mention_enabled INTEGER DEFAULT 1")
     db.commit()
@@ -43,7 +41,8 @@ def db_get_reminder(user_id):
     return cursor.fetchone()
 
 def db_add_reminder(user_id, channel_id, start_dt=None):
-    base_time = start_dt if start_dt else datetime.datetime.now()
+    # 日本時間基準で計算
+    base_time = start_dt if start_dt else datetime.datetime.now(JST)
     next_time = (base_time + datetime.timedelta(hours=3)).isoformat()
     cursor.execute(
         "INSERT OR REPLACE INTO reminders (user_id, next_time, channel_id, mention_enabled, reset_mention_enabled) VALUES (?, ?, ?, 1, 1)", 
@@ -59,27 +58,27 @@ def db_remove_reminder(user_id):
         return True
     return False
 
-# 3. ボットクラス定義（ハイブリッド対応）
+# 3. ボットクラス定義
 class SerinaHybridBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.message_content = True 
         intents.members = True 
-        super().__init__(command_prefix='??', intents=intents, help_command=None)
+        super().__init__(command_prefix=['!!','??'], intents=intents, help_command=None)
 
     async def setup_hook(self):
-        # スラッシュコマンドを同期
         await self.tree.sync()
 
 bot = SerinaHybridBot()
 
-# --- ⏰ 定期タスク ---
+# --- ⏰ 定期タスク (日本時間基準) ---
 
 @tasks.loop(seconds=30)
 async def check_reminders():
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(JST)
     cursor.execute("SELECT user_id, next_time, channel_id, mention_enabled FROM reminders")
     for user_id, next_time_str, channel_id, mention_enabled in cursor.fetchall():
+        # ISO形式の文字列をJST付きのdatetimeに戻す
         next_time = datetime.datetime.fromisoformat(next_time_str)
         if now >= next_time:
             channel = bot.get_channel(channel_id)
@@ -87,6 +86,7 @@ async def check_reminders():
                 prefix = f"<@{user_id}> " if mention_enabled == 1 else ""
                 await channel.send(f"{prefix}先生、カフェ更新から3時間です！生徒さんに会いに行きましょう。")
                 
+                # 次回を3時間後に更新
                 new_time = (next_time + datetime.timedelta(hours=3)).isoformat()
                 cursor.execute("UPDATE reminders SET next_time = ? WHERE user_id = ?", (new_time, user_id))
     db.commit()
@@ -101,7 +101,8 @@ async def update_status_task():
 
 @tasks.loop(seconds=60)
 async def daily_reset_task():
-    now = datetime.datetime.now()
+    now = datetime.datetime.now(JST)
+    # 日本時間の4時または16時に実行
     if (now.hour == 4 or now.hour == 16) and now.minute == 0:
         cursor.execute("SELECT user_id, channel_id, reset_mention_enabled FROM reminders")
         all_data = cursor.fetchall()
@@ -130,22 +131,14 @@ async def on_ready():
     if not check_reminders.is_running(): check_reminders.start()
     if not update_status_task.is_running(): update_status_task.start()
     if not daily_reset_task.is_running(): daily_reset_task.start()
-    print(f'Logged in as {bot.user} (Complete Hybrid Mode)')
+    print(f'Logged in as {bot.user} (JST Mode Activated)')
 
-# --- 🚀 ハイブリッドコマンド (!! と / 両対応) ---
+# --- 🚀 ハイブリッドコマンド ---
 
 @bot.hybrid_command(name="help", description="セリナがお手伝いできる内容を表示します")
 async def help_command(ctx):
-    embed = discord.Embed(
-        title="🍀 救護騎士団セリナ・活動のご案内", 
-        color=0xffc0cb,
-        description="先生、お疲れ様です！私がお手伝いできる内容をまとめました。"
-    )
-    embed.add_field(
-        name="🏥 メイン機能", 
-        value="**!!カフェ [時間]**\n3時間おきに通知します。`06:30` のように時間指定も可能です。", 
-        inline=False
-    )
+    embed = discord.Embed(title="🍀 救護騎士団セリナ・活動のご案内", color=0xffc0cb, description="先生、お疲れ様です！私がお手伝いできる内容をまとめました。")
+    embed.add_field(name="🏥 メイン機能", value="**!!カフェ [時間]**\n3時間おきに通知します。`06:30` のように時間指定も可能です。", inline=False)
     embed.add_field(name="🔔 通知設定", value="**!!メンション ON/OFF**\nカフェ通知のメンション切り替え\n**!!リセットメンション ON/OFF**\n4時/16時整理時のメンション切り替え", inline=False)
     embed.add_field(name="🔍 状態確認", value="**!!確認**: 次回の予定を表示\n**!!解除**: 救護活動を停止", inline=True)
     embed.add_field(name="⚙️ その他", value="**!!ping**: 応答速度の確認\n**!!要望 [内容]**: 開発者さんへ送信", inline=True)
@@ -160,7 +153,8 @@ async def cafe(ctx, time_str: str = None):
     if time_str:
         try:
             parsed_time = datetime.datetime.strptime(time_str, "%H:%M")
-            now = datetime.datetime.now()
+            now = datetime.datetime.now(JST)
+            # 今日の日付で指定時刻を作成し、JSTを付与
             start_dt = now.replace(hour=parsed_time.hour, minute=parsed_time.minute, second=0, microsecond=0)
             if start_dt < now: start_dt += datetime.timedelta(days=1)
         except ValueError:
@@ -189,20 +183,16 @@ async def stop_reminder(ctx):
     else:
         await ctx.send("現在実行中のリマインダーはありませんよ？")
 
-# --- 1. カフェ通知のメンション設定 ---
 @bot.hybrid_command(name="メンション", description="カフェ通知時のメンションを切り替えます")
 @app_commands.describe(setting="ON または OFF")
 async def toggle_mention(ctx, setting: str = None):
     data = db_get_reminder(ctx.author.id)
-    if not data: 
-        return await ctx.send("先に `!!カフェ` でリマインダーを開始してくださいね。")
+    if not data: return await ctx.send("先に `!!カフェ` で開始してくださいね。")
     
-    # 引数なし：現在の状態を表示
     if setting is None:
         current = "ON" if data[2] == 1 else "OFF"
         return await ctx.send(f"現在は **{current}** になっています。`!!メンション ON/OFF` で変えられますよ。")
 
-    # バリデーション：ON/OFF 以外を弾く
     if setting.upper() not in ["ON", "OFF"]:
         return await ctx.send("先生、設定は `ON` か `OFF` で教えてくださいね？")
 
@@ -211,27 +201,27 @@ async def toggle_mention(ctx, setting: str = None):
     db.commit()
     await ctx.send(f"了解しました！メンションを **{setting.upper()}** に設定しました。")
 
-# --- 2. 4時/16時リセットのメンション設定 ---
 @bot.hybrid_command(name="リセットメンション", description="4時/16時の整理時のメンションを切り替えます")
 @app_commands.describe(setting="ON または OFF")
 async def toggle_reset_mention(ctx, setting: str = None):
     data = db_get_reminder(ctx.author.id)
-    if not data: 
-        return await ctx.send("先に `!!カフェ` を使ってくださいね。")
+    if not data: return await ctx.send("先に `!!カフェ` を使ってくださいね。")
     
-    # 引数なし：現在の状態を表示（ここを修正！）
     if setting is None:
-        current = "ON" if data[3] == 1 else "OFF" # インデックス[3]を参照
+        current = "ON" if data[3] == 1 else "OFF"
         return await ctx.send(f"現在は **{current}** になっています。`!!リセットメンション ON/OFF` で変えられますよ。")
 
-    # バリデーション：ON/OFF 以外を弾く
     if setting.upper() not in ["ON", "OFF"]:
         return await ctx.send("先生、設定は `ON` か `OFF` で教えてくださいね？")
 
     val = 1 if setting.upper() == "ON" else 0
     cursor.execute("UPDATE reminders SET reset_mention_enabled = ? WHERE user_id = ?", (val, ctx.author.id))
     db.commit()
-    await ctx.send(f"了解しました！リセット時のメンションを **{setting.upper()}** に設定しました。")
+    await ctx.send(f"了解しました！リセット時のメンションを **{setting.upper()}** にしました。")
+
+@bot.hybrid_command(name="ping", description="私の応答速度を確認します")
+async def ping(ctx):
+    await ctx.send(f"ぽん！ですね ({round(bot.latency * 1000)}ms)")
 
 @bot.hybrid_command(name="要望", description="開発者に要望を送信します")
 @app_commands.describe(message="要望の内容")
@@ -244,11 +234,6 @@ async def feedback(ctx, *, message: str):
         await log_ch.send(embed=embed)
         await ctx.send("救護の参考にさせていただきますね。ご協力ありがとうございます！")
 
-@bot.hybrid_command(name="ping", description="私の応答速度を確認します")
-async def ping(ctx):
-    # bot.latency は秒単位なので、1000倍してミリ秒(ms)に変換します
-    await ctx.send(f"ぽん！ですね ({round(bot.latency * 1000)}ms)")
-
 @bot.hybrid_command(name="status", description="ボットの稼働状況を表示します")
 async def bot_status(ctx):
     guild_count = len(bot.guilds)
@@ -260,7 +245,8 @@ async def bot_status(ctx):
         msg = f"🏥 **現在の活動規模**\n現在、**{guild_count}箇所**のサーバーで合計 **{total_members}名** の先生を見守っていますよ。"
     await ctx.send(msg)
 
-# --- 🛠️ 管理者専用 (!!コマンドのみ) ---
+# --- 🛠️ 管理者専用 (!!コマンドのみ・要確認) ---
+
 @bot.command(name="一斉送信")
 async def broadcast(ctx, *, message: str):
     if ctx.author.id != OWNER_ID: return
@@ -272,14 +258,8 @@ async def broadcast(ctx, *, message: str):
     if target_count == 0:
         return await ctx.send("送信対象のチャンネルが見つかりませんでした。")
 
-    # 確認メッセージを表示
-    await ctx.send(
-        f"📢 **一斉送信の確認**\n"
-        f"この内容を **{target_count}箇所のサーバー** に送信します。よろしいですか？\n"
-        f"実行する場合は、30秒以内に **「はい」** と入力してください。"
-    )
+    await ctx.send(f"📢 **一斉送信の確認**\nこの内容を **{target_count}箇所のサーバー** に送信します。よろしいですか？\n30秒以内に **「はい」** と入力してください。")
 
-    # 先生（OWNER）からの「はい」を待つ
     def check(m):
         return m.author.id == OWNER_ID and m.channel == ctx.channel and m.content == "はい"
 
@@ -288,22 +268,16 @@ async def broadcast(ctx, *, message: str):
     except asyncio.TimeoutError:
         return await ctx.send("⌛ 時間切れです。送信を中止しました。")
 
-    # 送信開始
     sent_count = 0
     status_msg = await ctx.send("🚀 送信を開始します...")
-    
     for (ch_id,) in channels:
         ch = bot.get_channel(ch_id)
         if ch:
             try:
                 await ch.send(f"📢 **先生へのお知らせ**\n\n{message}")
                 sent_count += 1
-            except Exception:
-                pass 
+            except: pass 
                 
     await status_msg.edit(content=f"✅ **送信完了！**\n{sent_count}箇所のチャンネルへ届けました。")
 
-
 bot.run(TOKEN)
-
-
