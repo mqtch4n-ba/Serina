@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
-# 日本時間(JST)の定義
+# --- 🏥 日本時間(JST)の定義 ---
 JST = datetime.timezone(datetime.timedelta(hours=9))
 
 # 管理者・ログ用ID（環境変数から読み込む設定）
@@ -154,7 +154,7 @@ async def cafe(ctx, time_str: str = None):
         try:
             parsed_time = datetime.datetime.strptime(time_str, "%H:%M")
             now = datetime.datetime.now(JST)
-            # 今日の日付で指定時刻を作成し、JSTを付与
+            # 今日の日付で指定時刻を作成し、JSTを明示的に付与
             start_dt = now.replace(hour=parsed_time.hour, minute=parsed_time.minute, second=0, microsecond=0)
             if start_dt < now: start_dt += datetime.timedelta(days=1)
         except ValueError:
