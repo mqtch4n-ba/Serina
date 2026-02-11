@@ -7,6 +7,9 @@ import sqlite3
 from dotenv import load_dotenv
 import asyncio
 
+# タイムゾーンの定義（UTC+9）
+JST = datetime.timezone(datetime.timedelta(hours=9))
+
 # 1. 環境設定
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -302,4 +305,5 @@ async def broadcast(ctx, *, message: str):
 
 
 bot.run(TOKEN)
+
 
